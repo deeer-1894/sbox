@@ -1,0 +1,13 @@
+[package]
+name = "checkpoint"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+api-types = { path = "../api-types" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true

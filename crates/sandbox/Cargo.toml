@@ -1,0 +1,14 @@
+[package]
+name = "sandbox"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+api-types = { path = "../api-types" }
+capability = { path = "../capability" }
+async-trait.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true

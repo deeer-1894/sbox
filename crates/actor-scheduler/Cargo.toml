@@ -1,0 +1,13 @@
+[package]
+name = "actor-scheduler"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+actor-mailbox = { path = "../actor-mailbox" }
+api-types = { path = "../api-types" }
+async-trait.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true

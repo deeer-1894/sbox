@@ -1,0 +1,9 @@
+[package]
+name = "observability"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+api-types = { path = "../api-types" }
+tracing.workspace = true

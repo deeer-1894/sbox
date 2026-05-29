@@ -1,0 +1,12 @@
+[package]
+name = "capability"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+api-types = { path = "../api-types" }
+serde.workspace = true
+thiserror.workspace = true
+time.workspace = true
+uuid.workspace = true

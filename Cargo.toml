@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/api-types",
+  "crates/event-log",
+  "crates/actor-mailbox",
+  "crates/capability",
+  "crates/sandbox",
+  "crates/actor-kernel",
+  "crates/agent-core",
+  "crates/observability",
+  "crates/runtime-tests",
+  "crates/checkpoint",
+  "crates/actor-scheduler",
+  "crates/actor-cli",
+]
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+version = "0.1.0"
+
+[workspace.dependencies]
+ahash = "0.8"
+async-trait = "0.1"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "1"
+time = { version = "0.3", features = ["serde", "macros"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }

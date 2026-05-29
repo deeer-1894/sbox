@@ -1,0 +1,18 @@
+[package]
+name = "runtime-tests"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dev-dependencies]
+actor-kernel = { path = "../actor-kernel" }
+actor-mailbox = { path = "../actor-mailbox" }
+actor-scheduler = { path = "../actor-scheduler" }
+agent-core = { path = "../agent-core" }
+api-types = { path = "../api-types" }
+capability = { path = "../capability" }
+checkpoint = { path = "../checkpoint" }
+event-log = { path = "../event-log" }
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
