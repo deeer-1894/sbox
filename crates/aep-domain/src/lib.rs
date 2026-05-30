@@ -129,6 +129,20 @@ mod decide_tests {
 }
 
 #[cfg(test)]
+mod admit_tests {
+    use super::*;
+
+    #[test]
+    fn admits_below_limit_and_rejects_at_limit() {
+        assert!(admit(0, 1), "first slot admitted");
+        assert!(!admit(1, 1), "at limit -> rejected");
+        assert!(admit(4, 5), "below limit admitted");
+        assert!(!admit(5, 5), "at limit rejected");
+        assert!(!admit(0, 0), "zero limit rejects everything");
+    }
+}
+
+#[cfg(test)]
 mod requested_tool_tests {
     use super::*;
 
