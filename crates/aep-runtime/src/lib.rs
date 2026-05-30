@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use aep_audit::{capability_for, causal_chain, AuditEvent};
+use aep_memory::{MemoryEntry, TrustLabel};
 use aep_capability::{sign, Action, Capability, Resource};
 use aep_domain::{admit, decide, AgentReply, Decision, ToolOutput, ToolRequest, UserInput};
 use aep_policy::{evaluate, PolicyDecision};
@@ -181,6 +182,40 @@ impl AuditService for AuditServiceImpl {
     }
 }
 
+/// MemoryService: keyed by agent id. Durable tiered memory with trust labels.
+#[restate_sdk::object]
+pub trait MemoryService {
+    async fn store(entry: Json<MemoryEntry>) -> Result<(), HandlerError>;
+    async fn get(key: Json<String>) -> Result<Json<Option<MemoryEntry>>, HandlerError>;
+    async fn by_trust(trust: Json<TrustLabel>) -> Result<Json<Vec<MemoryEntry>>, HandlerError>;
+}
+
+pub struct MemoryServiceImpl;
+
+impl MemoryService for MemoryServiceImpl {
+    async fn store(&self, ctx: ObjectContext<'_>, Json(entry): Json<MemoryEntry>) -> Result<(), HandlerError> {
+        let mut entries = ctx.get::<Json<Vec<MemoryEntry>>>("entries").await?.map(|j| j.0).unwrap_or_default();
+        // Upsert by key (idempotent on replay).
+        if let Some(slot) = entries.iter_mut().find(|e| e.key == entry.key) {
+            *slot = entry;
+        } else {
+            entries.push(entry);
+        }
+        ctx.set("entries", Json(entries));
+        Ok(())
+    }
+
+    async fn get(&self, ctx: ObjectContext<'_>, Json(key): Json<String>) -> Result<Json<Option<MemoryEntry>>, HandlerError> {
+        let entries = ctx.get::<Json<Vec<MemoryEntry>>>("entries").await?.map(|j| j.0).unwrap_or_default();
+        Ok(Json(entries.into_iter().find(|e| e.key == key)))
+    }
+
+    async fn by_trust(&self, ctx: ObjectContext<'_>, Json(trust): Json<TrustLabel>) -> Result<Json<Vec<MemoryEntry>>, HandlerError> {
+        let entries = ctx.get::<Json<Vec<MemoryEntry>>>("entries").await?.map(|j| j.0).unwrap_or_default();
+        Ok(Json(entries.into_iter().filter(|e| e.trust == trust).collect()))
+    }
+}
+
 /// The external counter sidecar. Not part of Restate's journal — its mutation is
 /// exactly what must happen once per committed side effect.
 #[derive(Clone, Default)]
@@ -310,6 +345,29 @@ mod agent {
 
         emit(ctx, &trace, "tool_completed", Some("tool_requested"), "ToolService", now,
              None, Some(invocation_id), serde_json::json!({ "exec_count": out.exec_count })).await?;
+
+        // Classify + sanitize the tool output before it enters agent memory.
+        let raw = out
+            .output
+            .get("echo")
+            .and_then(|e| e.get("content"))
+            .and_then(|c| c.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let (sanitized_value, was_sanitized) = aep_memory::sanitize(&raw);
+        let entry = MemoryEntry {
+            key: trace.clone(),
+            value: sanitized_value,
+            tier: aep_memory::MemoryTier::Operational,
+            trust: aep_memory::classify_tool_output(),
+            source_capability: Some(cap.id.clone()),
+            sanitized: was_sanitized,
+            ts: now,
+        };
+        ctx.object_client::<MemoryServiceClient>(ctx.key().to_string())
+            .store(Json(entry))
+            .call()
+            .await?;
 
         Ok(AgentReply {
             output: out.output,

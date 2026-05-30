@@ -73,6 +73,7 @@ dependencies = [
  "aep-audit",
  "aep-capability",
  "aep-domain",
+ "aep-memory",
  "aep-policy",
  "aep-sandbox",
  "aep-telemetry",
