@@ -4,11 +4,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// A user message delivered to an AgentService. `idempotency_key` is the dedup
-/// anchor: the same key must drive the same tool invocation.
+/// anchor: the same key must drive the same tool invocation. `requested_tool`
+/// stands in for the model's chosen tool; absent means the default `echo`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UserInput {
     pub idempotency_key: String,
     pub content: String,
+    #[serde(default)]
+    pub requested_tool: Option<String>,
 }
 
 /// A request crossing the ToolService side-effect boundary.
@@ -29,11 +32,16 @@ pub struct ToolOutput {
     pub exec_count: u64,
 }
 
-/// What the agent returns to the caller.
+/// What the agent returns to the caller. On a policy denial, `denied` is true,
+/// `reason` explains, and `output`/`exec_count` carry their zero values.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AgentReply {
     pub output: serde_json::Value,
     pub exec_count: u64,
+    #[serde(default)]
+    pub denied: bool,
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 /// SHA-256 hex of a canonical JSON value.
@@ -68,7 +76,7 @@ pub fn plan_user_input(input: &UserInput) -> ToolRequest {
     let payload = serde_json::json!({ "content": input.content });
     ToolRequest {
         invocation_id: input.idempotency_key.clone(),
-        tool_name: "echo".to_string(),
+        tool_name: input.requested_tool.clone().unwrap_or_else(|| "echo".to_string()),
         input_hash: hash_input(&payload),
         input: payload,
     }
@@ -113,13 +121,38 @@ mod decide_tests {
 }
 
 #[cfg(test)]
+mod requested_tool_tests {
+    use super::*;
+
+    #[test]
+    fn plan_routes_to_requested_tool_when_present() {
+        let input = UserInput {
+            idempotency_key: "k-1".into(),
+            content: "hi".into(),
+            requested_tool: Some("shell".into()),
+        };
+        assert_eq!(plan_user_input(&input).tool_name, "shell");
+    }
+
+    #[test]
+    fn plan_defaults_to_echo_when_absent() {
+        let input = UserInput {
+            idempotency_key: "k-2".into(),
+            content: "hi".into(),
+            requested_tool: None,
+        };
+        assert_eq!(plan_user_input(&input).tool_name, "echo");
+    }
+}
+
+#[cfg(test)]
 mod plan_tests {
     use super::*;
     use serde_json::json;
 
     #[test]
     fn plan_is_deterministic_and_keyed_by_idempotency() {
-        let input = UserInput { idempotency_key: "k-1".into(), content: "hello".into() };
+        let input = UserInput { idempotency_key: "k-1".into(), content: "hello".into(), requested_tool: None };
         let a = plan_user_input(&input);
         let b = plan_user_input(&input);
         assert_eq!(a, b, "planning must be deterministic");

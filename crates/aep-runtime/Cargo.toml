@@ -6,6 +6,8 @@ license.workspace = true
 
 [dependencies]
 aep-domain = { path = "../aep-domain" }
+aep-capability = { path = "../aep-capability" }
+aep-policy = { path = "../aep-policy" }
 restate-sdk.workspace = true
 tokio.workspace = true
 axum.workspace = true

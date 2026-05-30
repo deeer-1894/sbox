@@ -46,7 +46,9 @@ dependencies = [
 name = "aep-runtime"
 version = "0.1.0"
 dependencies = [
+ "aep-capability",
  "aep-domain",
+ "aep-policy",
  "axum",
  "reqwest",
  "restate-sdk",
