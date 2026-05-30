@@ -10,6 +10,8 @@ aep-capability = { path = "../aep-capability" }
 aep-policy = { path = "../aep-policy" }
 aep-sandbox = { path = "../aep-sandbox" }
 aep-audit = { path = "../aep-audit" }
+aep-telemetry = { path = "../aep-telemetry" }
+tracing = { workspace = true }
 restate-sdk.workspace = true
 tokio.workspace = true
 axum.workspace = true

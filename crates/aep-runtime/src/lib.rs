@@ -57,6 +57,10 @@ impl ToolService for ToolServiceImpl {
         cap.authorize(Action::Call, &Resource::Tool { name: req.tool_name.clone() })
             .map_err(|e| TerminalError::new(format!("capability not scoped to tool: {e}")))?;
 
+        // OpenTelemetry-semantic span for this actor turn.
+        aep_telemetry::capture().record(&req.invocation_id, "ToolService");
+        tracing::info!(trace_id = %req.invocation_id, actor = "ToolService", kind = "turn", "actor turn");
+
         // --- Phase 0 side-effect boundary (unchanged) ---
         let existing = ctx.get::<Json<ToolOutput>>(&req.invocation_id).await?.map(|j| j.0);
         match decide(existing) {
@@ -191,6 +195,9 @@ pub fn counter_router() -> Router {
         .route("/count", get(|State(c): State<Counter>| async move {
             AxumJson(c.0.load(Ordering::SeqCst))
         }))
+        .route("/spans/:trace", get(|axum::extract::Path(trace): axum::extract::Path<String>| async move {
+            AxumJson(aep_telemetry::capture().get(&trace))
+        }))
         .with_state(state)
 }
 
@@ -251,6 +258,13 @@ mod agent {
         let req: ToolRequest = plan_user_input(input);
         let trace = req.invocation_id.clone();
         let now: u64 = ctx.run(|| async { now_unix() }).await?;
+
+        // OpenTelemetry-semantic span for this actor turn.
+        aep_telemetry::capture().record(&trace, "AgentService");
+        for (k, v) in aep_telemetry::span_fields(&trace, "AgentService", "turn") {
+            tracing::info!(field = k, value = %v, "span attribute");
+        }
+        tracing::info!(trace_id = %trace, actor = "AgentService", kind = "turn", "actor turn");
 
         // Root event.
         emit(ctx, &trace, "input", None, "AgentService", now, None, None,

@@ -68,12 +68,14 @@ dependencies = [
  "aep-domain",
  "aep-policy",
  "aep-sandbox",
+ "aep-telemetry",
  "axum",
  "reqwest",
  "restate-sdk",
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
