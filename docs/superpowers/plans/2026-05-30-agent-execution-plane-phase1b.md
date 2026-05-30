@@ -18,6 +18,27 @@ Two parts:
 - **Part A (Tasks 1–5):** the `aep-sandbox` crate and its isolation proofs — unit-tested, no infrastructure. This alone satisfies the spec criterion.
 - **Part B (Tasks 6–8):** wire the sandbox onto the live `ToolService` path so the observable side effect (the counter increment) is performed by a capability-gated host function inside WASM, and verify on the live stack.
 
+### Prerequisite (learned during execution)
+
+`wasmtime = "45"` (cranelift 0.132) requires **rustc >= 1.93**. Run
+`rustup update stable` first if the toolchain is older. The repo pins
+`channel = "stable"` in `rust-toolchain.toml`.
+
+### Implementation deltas (applied during execution — as-built differs from the tasks below)
+
+1. **Task 6 was dropped.** Re-scoping the minted capability to a separate
+   `Tool::"sink"` resource would have broken `ToolService`'s existing
+   tool-name authorization check (it verifies the capability authorizes
+   `Tool{tool_name}`). Instead, the capability stays scoped to the tool, and the
+   sandbox gates `host_sink` on that **same** resource.
+2. **`run_with_sink` and `run_tool` take an extra `required: &Resource`**
+   parameter (the resource the host function is gated on), instead of a
+   hardcoded `sink_resource()`. The `sink_resource()` helper was removed. Task 7
+   passes `&Resource::Tool { name: req.tool_name.clone() }`.
+3. Otherwise the wasmtime code in Tasks 2–5 is as-built. See
+   `2026-05-30-agent-execution-plane-phase1b-acceptance.md` for the verified
+   signatures and evidence.
+
 ## Key Design Decisions
 
 - **No ambient authority by construction.** The `Linker` starts empty (no WASI). A module can only import host functions the sandbox explicitly grants based on the capability. A module that imports an ungranted function fails to instantiate.
@@ -467,33 +488,13 @@ git commit -m "feat(sandbox): capability-gated side-effecting host call"
 
 ---
 
-## Task 6: Mint the sink-scoped capability
+## Task 6: ~~Mint the sink-scoped capability~~ — DROPPED
 
-For the live path, the capability minted for a permitted tool must authorize the sink resource so the sandbox can link the side effect.
-
-**Files:**
-- Modify: `crates/aep-runtime/src/lib.rs`
-
-- [ ] **Step 1: Broaden the minted capability**
-
-In `crates/aep-runtime/src/lib.rs`, in `AgentService::handle`, the capability is minted with `resource: Resource::Tool { name: req.tool_name.clone() }`. Phase 1b needs the sandbox's `sink` resource authorized too. Change the minted capability's resource to the sink resource so the sandbox can link `host_sink`, keeping policy as the gate on which tools reach minting at all:
-
-Replace the `resource:` line in the `Capability { ... }` construction with:
-
-```rust
-                resource: Resource::Tool { name: "sink".into() },
-```
-
-> Rationale: Phase 1 policy already decided *whether* this tool may run; the capability now scopes *what host effect* the sandbox may perform. ToolService still verifies the token before executing. (A later phase issues multi-resource capabilities; for Phase 1b one scoped resource keeps the wiring minimal.)
-
-- [ ] **Step 2: Build**
-
-Run: `cargo build -p aep-runtime`
-Expected: `Finished`.
-
-- [ ] **Step 3: Commit (with Task 7)**
-
-Defer commit until Task 7 wires the sandbox into ToolService.
+**Do not do this task.** See "Implementation deltas" above. Re-scoping the minted
+capability to a separate `Tool::"sink"` resource breaks `ToolService`'s existing
+check that the capability authorizes `Tool{tool_name}`. The capability stays
+scoped to the tool; the sandbox gates `host_sink` on that same resource by
+passing `&Resource::Tool { name: req.tool_name.clone() }` to `run_tool` (Task 7).
 
 ---
 
@@ -525,11 +526,12 @@ Replace the `let count: u64 = ctx.run(...).await?;` statement with:
                       (import "env" "host_sink" (func $sink (result i32)))
                       (func (export "run") (result i32) call $sink))
                 "#;
-                let cap_for_sink = cap.clone();
+                let cap_for_tool = cap.clone();
+                let required = Resource::Tool { name: req.tool_name.clone() };
                 let count: u64 = ctx
                     .run(|| async move {
                         let n = tokio::task::spawn_blocking(move || {
-                            aep_sandbox::run_tool(TOOL_WAT, &cap_for_sink, || {
+                            aep_sandbox::run_tool(TOOL_WAT, &cap_for_tool, &required, || {
                                 // Blocking POST to the counter from the host fn.
                                 reqwest::blocking::Client::new()
                                     .post(format!("{COUNTER_BASE}/incr"))
