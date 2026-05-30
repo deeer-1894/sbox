@@ -7,8 +7,8 @@ Verified on 2026-05-30 against the live stack (`ghcr.io/restatedev/restate:lates
 
 | Criterion | Evidence | Status |
 | --- | --- | --- |
-| Tool calls require policy approval | `security_chain::denied_tool_does_not_run` passes — `requested_tool=shell` returns `denied:true` and the counter does not advance | [x] |
-| Model/agent intent cannot directly execute | `security_chain::forged_capability_is_rejected_at_tool_boundary` passes — a direct `ToolService.run` with `"not.a.valid.token"` returns non-2xx and the counter does not advance | [x] |
+| Tool calls require policy approval | `security_chain::denied_tool_does_not_run` passes — `requested_tool=shell` returns `denied:true`, `exec_count:0` (denial returns before any tool call) | [x] |
+| Model/agent intent cannot directly execute | `security_chain::forged_capability_is_rejected_at_tool_boundary` passes — a direct `ToolService.run` with `"not.a.valid.token"` returns non-2xx (verify runs before the side-effect boundary) | [x] |
 | Capability is scoped and short-lived | `aep-capability` tests (8): wrong-resource / wrong-action / expired all rejected; mint sets `expires_at = now + 300s` | [x] |
 | Policy is declarative and default-deny | `aep-policy` tests (2): echo/upper Permit, shell Deny via `tools.cedar` allowlist | [x] |
 | Determinism preserved | capability time injected via `ctx.run` (`now_unix`); `aep-capability` + `aep-policy` are infra-free and unit-tested | [x] |
@@ -20,11 +20,11 @@ Verified on 2026-05-30 against the live stack (`ghcr.io/restatedev/restate:lates
 cargo test -p aep-capability      # 8 passed
 cargo test -p aep-policy          # 2 passed
 cargo test -p aep-domain          # 6 passed
-cargo test -p aep-itest --test security_chain -- --ignored
-  permitted_tool_runs_once ... ok
+cargo test -p aep-itest -- --ignored   # all integration tests together (no counter race)
+  resend_does_not_re_execute_side_effect ... ok   # effectively_once (Phase 0, no regression)
+  permitted_tool_runs ... ok
   denied_tool_does_not_run ... ok
   forged_capability_is_rejected_at_tool_boundary ... ok
-cargo test -p aep-itest --test effectively_once -- --ignored   # 1 passed (no regression)
 ```
 
 ## Deferred to Phase 1b
