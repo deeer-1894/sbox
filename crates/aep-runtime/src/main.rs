@@ -1,6 +1,6 @@
 use aep_runtime::{
-    counter_router, AgentService, AgentServiceImpl, TenantService, TenantServiceImpl,
-    ToolService, ToolServiceImpl,
+    counter_router, AgentService, AgentServiceImpl, AuditService, AuditServiceImpl,
+    TenantService, TenantServiceImpl, ToolService, ToolServiceImpl,
 };
 use restate_sdk::prelude::*;
 
@@ -18,6 +18,7 @@ async fn main() {
             .bind(ToolServiceImpl.serve())
             .bind(AgentServiceImpl.serve())
             .bind(TenantServiceImpl.serve())
+            .bind(AuditServiceImpl.serve())
             .build(),
     )
     .listen_and_serve("0.0.0.0:9080".parse().unwrap())

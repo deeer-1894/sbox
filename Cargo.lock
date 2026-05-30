@@ -63,6 +63,7 @@ dependencies = [
 name = "aep-runtime"
 version = "0.1.0"
 dependencies = [
+ "aep-audit",
  "aep-capability",
  "aep-domain",
  "aep-policy",

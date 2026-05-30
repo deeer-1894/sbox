@@ -3,6 +3,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use aep_audit::{capability_for, causal_chain, AuditEvent};
 use aep_capability::{sign, Action, Capability, Resource};
 use aep_domain::{admit, decide, AgentReply, Decision, ToolOutput, ToolRequest, UserInput};
 use aep_policy::{evaluate, PolicyDecision};
@@ -144,6 +145,38 @@ impl TenantService for TenantServiceImpl {
     }
 }
 
+/// AuditService: keyed by trace_id. Durable, idempotent audit sink + query API.
+#[restate_sdk::object]
+pub trait AuditService {
+    async fn record(event: Json<AuditEvent>) -> Result<(), HandlerError>;
+    async fn chain() -> Result<Json<Vec<AuditEvent>>, HandlerError>;
+    async fn capability(invocation_id: Json<String>) -> Result<Json<Option<String>>, HandlerError>;
+}
+
+pub struct AuditServiceImpl;
+
+impl AuditService for AuditServiceImpl {
+    async fn record(&self, ctx: ObjectContext<'_>, Json(event): Json<AuditEvent>) -> Result<(), HandlerError> {
+        let mut events = ctx.get::<Json<Vec<AuditEvent>>>("events").await?.map(|j| j.0).unwrap_or_default();
+        // Idempotent: re-emission on replay is a no-op.
+        if !events.iter().any(|e| e.message_id == event.message_id) {
+            events.push(event);
+            ctx.set("events", Json(events));
+        }
+        Ok(())
+    }
+
+    async fn chain(&self, ctx: ObjectContext<'_>) -> Result<Json<Vec<AuditEvent>>, HandlerError> {
+        let events = ctx.get::<Json<Vec<AuditEvent>>>("events").await?.map(|j| j.0).unwrap_or_default();
+        Ok(Json(causal_chain(&events)))
+    }
+
+    async fn capability(&self, ctx: ObjectContext<'_>, Json(invocation_id): Json<String>) -> Result<Json<Option<String>>, HandlerError> {
+        let events = ctx.get::<Json<Vec<AuditEvent>>>("events").await?.map(|j| j.0).unwrap_or_default();
+        Ok(Json(capability_for(&events, &invocation_id)))
+    }
+}
+
 /// The external counter sidecar. Not part of Restate's journal — its mutation is
 /// exactly what must happen once per committed side effect.
 #[derive(Clone, Default)]
@@ -216,19 +249,23 @@ mod agent {
     ) -> Result<AgentReply, HandlerError> {
         let agent_id = ctx.key().to_string();
         let req: ToolRequest = plan_user_input(input);
+        let trace = req.invocation_id.clone();
+        let now: u64 = ctx.run(|| async { now_unix() }).await?;
+
+        // Root event.
+        emit(ctx, &trace, "input", None, "AgentService", now, None, None,
+             serde_json::json!({ "content": input.content })).await?;
 
         // Policy is evaluated independently of the model's intent.
         if let PolicyDecision::Deny(reason) = evaluate(&agent_id, &req.tool_name) {
+            emit(ctx, &trace, "policy_deny", Some("input"), "AgentService", now, None, None,
+                 serde_json::json!({ "reason": reason.clone() })).await?;
             return Ok(AgentReply {
-                output: serde_json::Value::Null,
-                exec_count: 0,
-                denied: true,
-                reason: Some(reason),
+                output: serde_json::Value::Null, exec_count: 0, denied: true, reason: Some(reason),
             });
         }
-
-        // Deterministic time for the capability TTL (journaled via ctx.run).
-        let now: u64 = ctx.run(|| async { now_unix() }).await?;
+        emit(ctx, &trace, "policy_permit", Some("input"), "AgentService", now, None, None,
+             serde_json::json!({ "tool": req.tool_name })).await?;
 
         // Mint a short-lived capability scoped to exactly this tool.
         let cap = Capability {
@@ -241,19 +278,62 @@ mod agent {
             policy_hash: "tools.cedar@v1".into(),
             audit_id: format!("aud-{}", req.invocation_id),
         };
+        emit(ctx, &trace, "capability_minted", Some("policy_permit"), "AgentService", now,
+             Some(cap.id.clone()), None, serde_json::json!({ "resource": req.tool_name })).await?;
         let token = sign(&cap_secret(), &cap);
 
+        emit(ctx, &trace, "tool_requested", Some("capability_minted"), "AgentService", now,
+             Some(cap.id.clone()), Some(req.invocation_id.clone()),
+             serde_json::json!({ "tool": req.tool_name })).await?;
+
         let tool_key = req.tool_name.clone();
+        let invocation_id = req.invocation_id.clone();
         let Json(out) = ctx
             .object_client::<ToolServiceClient>(tool_key)
             .run(Json(ToolCall { request: req, capability_token: token }))
             .call()
             .await?;
+
+        emit(ctx, &trace, "tool_completed", Some("tool_requested"), "ToolService", now,
+             None, Some(invocation_id), serde_json::json!({ "exec_count": out.exec_count })).await?;
+
         Ok(AgentReply {
             output: out.output,
             exec_count: out.exec_count,
             denied: false,
             reason: None,
         })
+    }
+
+    /// Emit one audit event to AuditService (keyed by trace). message_id is
+    /// deterministic ("{trace}:{kind}"), so replay re-emits identically and dedups.
+    #[allow(clippy::too_many_arguments)]
+    async fn emit(
+        ctx: &ObjectContext<'_>,
+        trace: &str,
+        kind: &str,
+        parent_kind: Option<&str>,
+        actor: &str,
+        ts: u64,
+        capability_id: Option<String>,
+        invocation_id: Option<String>,
+        detail: serde_json::Value,
+    ) -> Result<(), HandlerError> {
+        let event = AuditEvent {
+            trace_id: trace.to_string(),
+            message_id: format!("{trace}:{kind}"),
+            causal_parent_id: parent_kind.map(|p| format!("{trace}:{p}")),
+            actor: actor.to_string(),
+            kind: kind.to_string(),
+            capability_id,
+            invocation_id,
+            detail,
+            ts,
+        };
+        ctx.object_client::<AuditServiceClient>(trace.to_string())
+            .record(Json(event))
+            .call()
+            .await?;
+        Ok(())
     }
 }
