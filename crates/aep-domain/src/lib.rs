@@ -12,6 +12,14 @@ pub struct UserInput {
     pub content: String,
     #[serde(default)]
     pub requested_tool: Option<String>,
+    #[serde(default)]
+    pub tenant: Option<String>,
+}
+
+/// Admission rule for a per-tenant concurrency quota: admit while strictly
+/// below the limit.
+pub fn admit(in_flight: u32, limit: u32) -> bool {
+    in_flight < limit
 }
 
 /// A request crossing the ToolService side-effect boundary.
@@ -130,6 +138,7 @@ mod requested_tool_tests {
             idempotency_key: "k-1".into(),
             content: "hi".into(),
             requested_tool: Some("shell".into()),
+            tenant: None,
         };
         assert_eq!(plan_user_input(&input).tool_name, "shell");
     }
@@ -140,6 +149,7 @@ mod requested_tool_tests {
             idempotency_key: "k-2".into(),
             content: "hi".into(),
             requested_tool: None,
+            tenant: None,
         };
         assert_eq!(plan_user_input(&input).tool_name, "echo");
     }
@@ -152,7 +162,7 @@ mod plan_tests {
 
     #[test]
     fn plan_is_deterministic_and_keyed_by_idempotency() {
-        let input = UserInput { idempotency_key: "k-1".into(), content: "hello".into(), requested_tool: None };
+        let input = UserInput { idempotency_key: "k-1".into(), content: "hello".into(), requested_tool: None, tenant: None };
         let a = plan_user_input(&input);
         let b = plan_user_input(&input);
         assert_eq!(a, b, "planning must be deterministic");
