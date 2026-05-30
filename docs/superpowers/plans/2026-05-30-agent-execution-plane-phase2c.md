@@ -170,11 +170,15 @@ git commit -m "feat(telemetry): span attribute set + in-process span capture"
 
 - [ ] **Step 1: Add the dependency**
 
-In `crates/aep-runtime/Cargo.toml` `[dependencies]`, add:
+In `crates/aep-runtime/Cargo.toml` `[dependencies]`, add (the crate did not
+previously depend on `tracing` directly — only transitively — so add both):
 
 ```toml
 aep-telemetry = { path = "../aep-telemetry" }
+tracing = { workspace = true }
 ```
+
+And add `tracing = "0.1"` under `[workspace.dependencies]` in the root `Cargo.toml`.
 
 - [ ] **Step 2: Record + emit a span in AgentService**
 
