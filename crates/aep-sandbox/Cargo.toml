@@ -1,0 +1,10 @@
+[package]
+name = "aep-sandbox"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+wasmtime = { workspace = true }
+aep-capability = { path = "../aep-capability" }
+thiserror = { workspace = true }

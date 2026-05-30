@@ -4,6 +4,7 @@ members = [
   "crates/aep-domain",
   "crates/aep-capability",
   "crates/aep-policy",
+  "crates/aep-sandbox",
   "crates/aep-runtime",
   "crates/aep-itest",
 ]
@@ -26,3 +27,4 @@ uuid = { version = "1", features = ["v4"] }
 hmac = "0.12"
 base64 = "0.22"
 cedar-policy = "4"
+wasmtime = "45"
