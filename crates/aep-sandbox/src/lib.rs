@@ -22,11 +22,6 @@ fn engine() -> Engine {
     Engine::new(&config).expect("valid wasmtime config")
 }
 
-/// The resource a tool's side-effect host function (`host_sink`) requires.
-fn sink_resource() -> Resource {
-    Resource::Tool { name: "sink".into() }
-}
-
 /// Run a pure-compute module's `add(i32,i32)->i32` export under a fuel bound and
 /// an empty linker (no host authority whatsoever).
 pub fn run_add(wat: &str, a: i32, b: i32) -> Result<i32, SandboxError> {
@@ -45,16 +40,16 @@ pub fn run_add(wat: &str, a: i32, b: i32) -> Result<i32, SandboxError> {
 }
 
 /// Run a module that may import `env.host_sink(i32)->i32`. The host function is
-/// linked ONLY when `cap` authorizes the sink resource. Returns the value the
-/// module produces from its `run()->i32` export.
-pub fn run_with_sink(wat: &str, cap: &Capability) -> Result<i32, SandboxError> {
+/// linked ONLY when `cap` authorizes `required`. Returns the value the module
+/// produces from its `run()->i32` export.
+pub fn run_with_sink(wat: &str, cap: &Capability, required: &Resource) -> Result<i32, SandboxError> {
     let engine = engine();
     let module = Module::new(&engine, wat).map_err(|e| SandboxError::Load(e.to_string()))?;
     let mut store = Store::new(&engine, ());
     store.set_fuel(FUEL).map_err(|e| SandboxError::Load(e.to_string()))?;
     let mut linker: Linker<()> = Linker::new(&engine);
 
-    if cap.authorize(Action::Call, &sink_resource()).is_ok() {
+    if cap.authorize(Action::Call, required).is_ok() {
         linker
             .func_wrap("env", "host_sink", |arg: i32| -> i32 { arg })
             .map_err(|e| SandboxError::Load(e.to_string()))?;
@@ -70,10 +65,10 @@ pub fn run_with_sink(wat: &str, cap: &Capability) -> Result<i32, SandboxError> {
 }
 
 /// Run a tool module whose `run()->i32` export may call `env.host_sink()->i32`.
-/// The host_sink is linked only when `cap` authorizes the sink resource; when
-/// called, it invokes `sink` (the host side effect) and returns its value. The
-/// closure is the host's authority — the WASM cannot reach it any other way.
-pub fn run_tool<F>(wat: &str, cap: &Capability, sink: F) -> Result<i32, SandboxError>
+/// The host_sink is linked only when `cap` authorizes `required`; when called, it
+/// invokes `sink` (the host side effect) and returns its value. The closure is
+/// the host's authority — the WASM cannot reach it any other way.
+pub fn run_tool<F>(wat: &str, cap: &Capability, required: &Resource, sink: F) -> Result<i32, SandboxError>
 where
     F: Fn() -> u64 + Send + Sync + 'static,
 {
@@ -83,7 +78,7 @@ where
     store.set_fuel(FUEL).map_err(|e| SandboxError::Load(e.to_string()))?;
     let mut linker: Linker<()> = Linker::new(&engine);
 
-    if cap.authorize(Action::Call, &sink_resource()).is_ok() {
+    if cap.authorize(Action::Call, required).is_ok() {
         linker
             .func_wrap("env", "host_sink", move |_caller: wasmtime::Caller<'_, ()>| -> i32 {
                 sink() as i32
@@ -167,15 +162,17 @@ mod gated_tests {
 
     #[test]
     fn granted_capability_allows_host_call() {
-        let cap = cap_for(Resource::Tool { name: "sink".into() });
-        let got = run_with_sink(SINK_WAT, &cap).unwrap();
+        let need = Resource::Tool { name: "echo".into() };
+        let cap = cap_for(need.clone());
+        let got = run_with_sink(SINK_WAT, &cap, &need).unwrap();
         assert_eq!(got, 7, "host_sink echoes its argument when authorized");
     }
 
     #[test]
     fn ungranted_capability_omits_host_fn() {
+        let need = Resource::Tool { name: "echo".into() };
         let cap = cap_for(Resource::Tool { name: "other".into() });
-        let err = run_with_sink(SINK_WAT, &cap).unwrap_err();
+        let err = run_with_sink(SINK_WAT, &cap, &need).unwrap_err();
         assert!(matches!(err, SandboxError::Load(_)), "got {err:?}");
     }
 }
@@ -202,8 +199,9 @@ mod effect_tests {
 
     #[test]
     fn authorized_tool_runs_side_effect_once() {
+        let need = Resource::Tool { name: "echo".into() };
         let counter = Arc::new(AtomicU64::new(0));
-        let n = run_tool(RUN_WAT, &cap(Resource::Tool { name: "sink".into() }), {
+        let n = run_tool(RUN_WAT, &cap(need.clone()), &need, {
             let c = counter.clone();
             move || c.fetch_add(1, Ordering::SeqCst) + 1
         })
@@ -214,8 +212,9 @@ mod effect_tests {
 
     #[test]
     fn unauthorized_tool_cannot_run_side_effect() {
+        let need = Resource::Tool { name: "echo".into() };
         let counter = Arc::new(AtomicU64::new(0));
-        let err = run_tool(RUN_WAT, &cap(Resource::Tool { name: "other".into() }), {
+        let err = run_tool(RUN_WAT, &cap(Resource::Tool { name: "other".into() }), &need, {
             let c = counter.clone();
             move || c.fetch_add(1, Ordering::SeqCst) + 1
         })

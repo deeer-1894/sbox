@@ -62,20 +62,33 @@ impl ToolService for ToolServiceImpl {
             Decision::Reuse(output) => Ok(Json(output)),
             Decision::Execute => {
                 let content = req.input.clone();
+                // The tool runs as WASM; its only path to the side effect is the
+                // capability-gated host_sink, which POSTs the counter. The sandbox
+                // links host_sink only if `cap` authorizes this tool's resource.
+                const TOOL_WAT: &str = r#"
+                    (module
+                      (import "env" "host_sink" (func $sink (result i32)))
+                      (func (export "run") (result i32) call $sink))
+                "#;
+                let cap_for_tool = cap.clone();
+                let required = Resource::Tool { name: req.tool_name.clone() };
                 let count: u64 = ctx
                     .run(|| async move {
-                        let n = reqwest::Client::new()
-                            .post(format!("{COUNTER_BASE}/incr"))
-                            .send()
-                            .await
-                            .map_err(|e| TerminalError::new(format!("counter unreachable: {e}")))?
-                            .text()
-                            .await
-                            .map_err(|e| TerminalError::new(format!("counter body: {e}")))?
-                            .trim()
-                            .parse::<u64>()
-                            .map_err(|e| TerminalError::new(format!("counter parse: {e}")))?;
-                        Ok(n)
+                        let n = tokio::task::spawn_blocking(move || {
+                            aep_sandbox::run_tool(TOOL_WAT, &cap_for_tool, &required, || {
+                                reqwest::blocking::Client::new()
+                                    .post(format!("{COUNTER_BASE}/incr"))
+                                    .send()
+                                    .and_then(|r| r.text())
+                                    .ok()
+                                    .and_then(|t| t.trim().parse::<u64>().ok())
+                                    .unwrap_or(0)
+                            })
+                        })
+                        .await
+                        .map_err(|e| TerminalError::new(format!("sandbox join: {e}")))?
+                        .map_err(|e| TerminalError::new(format!("sandbox: {e}")))?;
+                        Ok(n as u64)
                     })
                     .await?;
                 let output = ToolOutput {
