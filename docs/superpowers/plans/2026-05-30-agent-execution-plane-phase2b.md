@@ -357,10 +357,13 @@ In `crates/aep-runtime/src/lib.rs`, in `mod agent`'s `handle_inner`, emit audit 
             detail,
             ts,
         };
+        // A Restate client `.call().await` resolves to Result<_, TerminalError>;
+        // `?` converts it into the HandlerError this helper returns.
         ctx.object_client::<AuditServiceClient>(trace.to_string())
             .record(Json(event))
             .call()
-            .await
+            .await?;
+        Ok(())
     }
 ```
 
