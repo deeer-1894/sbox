@@ -5,7 +5,7 @@ set -euo pipefail
 curl --fail --silent --show-error \
   http://localhost:9070/deployments \
   -H 'content-type: application/json' \
-  -d '{"uri":"http://host.docker.internal:9080"}' | tee /dev/stderr
+  -d '{"uri":"http://host.docker.internal:9080","force":true}' | tee /dev/stderr
 echo
 echo "Registered. Services:"
 curl --fail --silent http://localhost:9070/services | tee /dev/stderr
