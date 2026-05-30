@@ -1,6 +1,7 @@
 services:
   restate:
-    image: restatedev/restate:latest
+    # ghcr.io mirror avoids Docker Hub anonymous pull rate limits.
+    image: ghcr.io/restatedev/restate:latest
     ports:
       - "8080:8080"   # ingress (invoke handlers)
       - "9070:9070"   # admin (register deployments)

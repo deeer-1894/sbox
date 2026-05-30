@@ -1,39 +1,55 @@
 #!/usr/bin/env bash
-# Crash-recovery check for the side-effect boundary.
+# Deterministic crash-recovery check for the side-effect boundary.
 #
-# Procedure:
-#   1. Ensure Restate is up and a deployment is registered (scripts/register.sh).
-#   2. Start the service so its PID is known:
-#        cargo run -p aep-runtime &  RUNTIME_PID=$!
-#   3. Run this script. It fires one invocation, then kills the service mid-flight,
-#      restarts it, re-registers, and reports the counter.
+# Proves: a tool side effect committed before a hard crash is recovered from
+# Restate's journal (which lives in restate-server, not our process) and is NOT
+# re-executed when the same invocation is resent after restart.
 #
-# Expected result: the counter advances by EXACTLY ONE across the whole episode.
-# Restate retries the invocation after restart, but the committed ctx.run result
-# is replayed from the journal — the external counter is not bumped a second time.
+# Note on the counter: the Phase 0 "external" counter sidecar lives INSIDE the
+# aep-runtime process, so `kill -9` resets it to 0 on restart. That is fine — it
+# makes "no re-execution" visually obvious: if recovery worked, the post-crash
+# resend reuses the journaled ToolCompleted (returns the original exec_count) and
+# never POSTs the counter, so the fresh counter stays at 0. A production external
+# effect (S3, an API) would instead persist via its own external_reference.
+#
+# Prereqs: Restate up + deployment registered; run from the repo root with the
+# service started via `cargo run -p aep-runtime`.
 set -euo pipefail
 
+PID=$(pgrep -f 'target/debug/aep-runtime' | head -1)
 KEY="recover-$(date +%s)"
-BEFORE=$(curl --fail --silent http://localhost:9090/count)
-echo "counter before: $BEFORE  key: $KEY"
+echo "service pid=$PID  key=$KEY"
 
-# Fire the invocation in the background; do not wait for it.
-curl --silent http://localhost:8080/AgentService/agent-1/handle \
+# 1. Invoke; the side effect runs once and is journaled by Restate.
+R1=$(curl -s http://localhost:8080/AgentService/agent-1/handle \
   -H 'content-type: application/json' \
-  -d "{\"idempotency_key\":\"$KEY\",\"content\":\"hello\"}" >/dev/null &
+  -d "{\"idempotency_key\":\"$KEY\",\"content\":\"hello\"}")
+EXEC1=$(echo "$R1" | grep -o '"exec_count":[0-9]*' | grep -o '[0-9]*')
+echo "first invoke committed exec_count=$EXEC1"
 
-# Give it a moment to journal ToolRequested / run the side effect, then kill.
+# 2. Hard crash.
+kill -9 "$PID"
 sleep 1
-echo "killing aep-runtime (pkill); restart it manually, then re-run register.sh"
-pkill -f 'target/debug/aep-runtime' || true
+echo "killed (kill -9)"
 
-cat <<'EOF'
+# 3. Restart the stateless service at the same URI (no re-register needed).
+nohup cargo run -p aep-runtime >/tmp/aep-runtime.log 2>&1 &
+disown
+for i in $(seq 1 30); do curl -s http://localhost:9090/count >/dev/null 2>&1 && break; sleep 2; done
+echo "restarted; fresh in-process counter=$(curl -s http://localhost:9090/count)"
 
-Now, in the service terminal:
-  cargo run -p aep-runtime
-Then re-register and read the counter:
-  ./scripts/register.sh
-  curl --silent http://localhost:9090/count ; echo
+# 4. Resend the same key; must reuse the journaled completion.
+R2=$(curl -s http://localhost:8080/AgentService/agent-1/handle \
+  -H 'content-type: application/json' \
+  -d "{\"idempotency_key\":\"$KEY\",\"content\":\"hello\"}")
+EXEC2=$(echo "$R2" | grep -o '"exec_count":[0-9]*' | grep -o '[0-9]*')
+CNT=$(curl -s http://localhost:9090/count)
 
-PASS if the counter equals (BEFORE + 1). FAIL if it is (BEFORE + 2).
-EOF
+echo "=== RESULT ==="
+if [ "$EXEC2" = "$EXEC1" ] && [ "$CNT" = "0" ]; then
+  echo "PASS: resend after crash reused journaled completion (exec_count=$EXEC2) and did not re-run the side effect (fresh counter=$CNT)"
+  exit 0
+else
+  echo "FAIL: EXEC1=$EXEC1 EXEC2=$EXEC2 counter=$CNT"
+  exit 1
+fi
