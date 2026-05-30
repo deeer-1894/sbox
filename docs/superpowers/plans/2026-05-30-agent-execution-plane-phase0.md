@@ -655,7 +655,11 @@ git commit -m "feat(runtime): ToolService side-effect boundary + AgentService + 
 Replace the contents of `crates/aep-runtime/src/main.rs`:
 
 ```rust
-use aep_runtime::{counter_router, AgentServiceImpl, ToolServiceImpl};
+// The `serve()` method comes from the macro-generated service traits, so the
+// traits (not just the *Impl structs) must be in scope here.
+use aep_runtime::{
+    counter_router, AgentService, AgentServiceImpl, ToolService, ToolServiceImpl,
+};
 use restate_sdk::prelude::*;
 
 #[tokio::main]
