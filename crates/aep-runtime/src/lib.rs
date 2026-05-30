@@ -181,8 +181,29 @@ impl AuditService for AuditServiceImpl {
         let mut events = ctx.get::<Json<Vec<AuditEvent>>>("events").await?.map(|j| j.0).unwrap_or_default();
         // Idempotent: re-emission on replay is a no-op.
         if !events.iter().any(|e| e.message_id == event.message_id) {
+            // Best-effort dual-write to ClickHouse (analytics sink). Restate state
+            // is authoritative; a ClickHouse outage must not fail the request.
+            let row = serde_json::json!({
+                "trace_id": event.trace_id,
+                "message_id": event.message_id,
+                "causal_parent_id": event.causal_parent_id,
+                "actor": event.actor,
+                "kind": event.kind,
+                "capability_id": event.capability_id,
+                "invocation_id": event.invocation_id,
+                "detail": event.detail.to_string(),
+                "ts": event.ts,
+            });
             events.push(event);
             ctx.set("events", Json(events));
+            ctx.run(|| async move {
+                let url = std::env::var("CLICKHOUSE_URL")
+                    .unwrap_or_else(|_| "http://aep:aep@localhost:8123".to_string());
+                let body = format!("INSERT INTO audit_events FORMAT JSONEachRow\n{row}");
+                let _ = reqwest::Client::new().post(&url).body(body).send().await;
+                Ok(())
+            })
+            .await?;
         }
         Ok(())
     }

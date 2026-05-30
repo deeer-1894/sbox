@@ -7,3 +7,16 @@ services:
       - "9070:9070"   # admin (register deployments)
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    ports:
+      - "8123:8123"   # HTTP interface (audit analytics sink)
+    environment:
+      CLICKHOUSE_USER: aep
+      CLICKHOUSE_PASSWORD: aep
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
