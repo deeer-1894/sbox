@@ -697,6 +697,18 @@ pub fn cap_secret() -> Vec<u8> {
     std::env::var("AEP_CAP_SECRET").unwrap_or_else(|_| "dev-insecure-secret".into()).into_bytes()
 }
 
+/// Current Unix time (seconds). Call only inside `ctx.run` so the value is
+/// journaled and stable across replay. NOTE: the return type must be
+/// `Result<u64, HandlerError>` (not `TerminalError`) — `ctx.run` requires the
+/// closure future to resolve to `Result<_, HandlerError>`; the `?` below converts
+/// the SystemTime `TerminalError` into a `HandlerError`.
+fn now_unix() -> Result<u64, HandlerError> {
+    Ok(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| TerminalError::new(e.to_string()))?
+        .as_secs())
+}
+
 /// A tool invocation carrying its authorizing capability token.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ToolCall {
@@ -752,14 +764,7 @@ In `crates/aep-runtime/src/lib.rs`, replace the entire `impl AgentService for Ag
             }
 
             // Deterministic time for the capability TTL (journaled via ctx.run).
-            let now: u64 = ctx
-                .run(|| async {
-                    Ok(std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map_err(|e| TerminalError::new(e.to_string()))?
-                        .as_secs())
-                })
-                .await?;
+            let now: u64 = ctx.run(|| async { now_unix() }).await?;
 
             // Mint a short-lived capability scoped to exactly this tool.
             let cap = Capability {
@@ -827,14 +832,7 @@ impl ToolService for ToolServiceImpl {
         Json(ToolCall { request: req, capability_token }): Json<ToolCall>,
     ) -> Result<Json<ToolOutput>, HandlerError> {
         // The capability is the sole authority. Deterministic time via ctx.run.
-        let now: u64 = ctx
-            .run(|| async {
-                Ok(std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|e| TerminalError::new(e.to_string()))?
-                    .as_secs())
-            })
-            .await?;
+        let now: u64 = ctx.run(|| async { now_unix() }).await?;
         let cap = aep_capability::verify(&cap_secret(), &capability_token, now)
             .map_err(|e| TerminalError::new(format!("capability rejected: {e}")))?;
         cap.authorize(Action::Call, &Resource::Tool { name: req.tool_name.clone() })
