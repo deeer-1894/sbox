@@ -12,6 +12,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aep-audit"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "aep-capability"
 version = "0.1.0"
 dependencies = [
