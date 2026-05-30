@@ -6,6 +6,7 @@ members = [
   "crates/aep-policy",
   "crates/aep-sandbox",
   "crates/aep-audit",
+  "crates/aep-telemetry",
   "crates/aep-runtime",
   "crates/aep-itest",
 ]
