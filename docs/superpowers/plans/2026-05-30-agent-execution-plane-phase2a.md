@@ -22,6 +22,17 @@ Deferred to their own plans (each independently shippable):
 
 Prerequisite: Phase 1 + 1b complete and green.
 
+## Gotchas (learned during execution)
+
+- **Re-registration needs `force:true`.** Restate ignores re-registration of an
+  already-known deployment URI, so a newly added service never appears. Ensure
+  `scripts/register.sh` posts `{"uri":"...","force":true}` (fixed during this
+  phase), and re-run it after Task 2.
+- **No-argument handlers require an empty body and no content-type.**
+  `acquire`/`release`/`in_flight` reject a JSON body with HTTP 400. The Task 4
+  test calls them via a bodyless POST helper (`post_empty`); only `set_limit`
+  (which takes an arg) sends a JSON body.
+
 ## Key Design Decisions
 
 - **Concurrency quota, not rate.** `TenantService` tracks in-flight runs; `acquire` admits while `in_flight < limit`, else rejects. This matches the spec's "max_concurrent" and gives an immediate backpressure signal.
@@ -333,10 +344,22 @@ Create `crates/aep-itest/tests/quota.rs`:
 //!   cargo test -p aep-itest --test quota -- --ignored
 const INGRESS: &str = "http://localhost:8080";
 
+/// POST a JSON body (for handlers that take an argument).
 async fn post(path: &str, body: serde_json::Value) -> (reqwest::StatusCode, serde_json::Value) {
     let resp = reqwest::Client::new()
         .post(format!("{INGRESS}{path}"))
         .json(&body)
+        .send().await.unwrap();
+    let status = resp.status();
+    let json = resp.json().await.unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
+/// POST with no body and no content-type — required by Restate for no-argument
+/// handlers (acquire/release/in_flight).
+async fn post_empty(path: &str) -> (reqwest::StatusCode, serde_json::Value) {
+    let resp = reqwest::Client::new()
+        .post(format!("{INGRESS}{path}"))
         .send().await.unwrap();
     let status = resp.status();
     let json = resp.json().await.unwrap_or(serde_json::Value::Null);
@@ -351,15 +374,15 @@ async fn quota_admits_then_rejects_then_recovers() {
 
     post(&format!("{base}/set_limit"), serde_json::json!(1)).await;
 
-    let (_, a1) = post(&format!("{base}/acquire"), serde_json::json!(null)).await;
+    let (_, a1) = post_empty(&format!("{base}/acquire")).await;
     assert_eq!(a1, serde_json::json!(true), "first acquire admitted");
 
-    let (_, a2) = post(&format!("{base}/acquire"), serde_json::json!(null)).await;
+    let (_, a2) = post_empty(&format!("{base}/acquire")).await;
     assert_eq!(a2, serde_json::json!(false), "second acquire over limit -> rejected");
 
-    post(&format!("{base}/release"), serde_json::json!(null)).await;
+    post_empty(&format!("{base}/release")).await;
 
-    let (_, a3) = post(&format!("{base}/acquire"), serde_json::json!(null)).await;
+    let (_, a3) = post_empty(&format!("{base}/acquire")).await;
     assert_eq!(a3, serde_json::json!(true), "acquire admitted again after release");
 }
 
