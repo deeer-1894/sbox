@@ -181,47 +181,79 @@ mod agent {
             ctx: ObjectContext<'_>,
             Json(input): Json<UserInput>,
         ) -> Result<Json<AgentReply>, HandlerError> {
-            let agent_id = ctx.key().to_string();
-            let req: ToolRequest = plan_user_input(&input);
+            let tenant = input.tenant.clone().unwrap_or_else(|| "default".to_string());
 
-            // Policy is evaluated independently of the model's intent.
-            if let PolicyDecision::Deny(reason) = evaluate(&agent_id, &req.tool_name) {
+            // Admission control: the cheapest rejection happens first.
+            let admitted = ctx
+                .object_client::<TenantServiceClient>(tenant.clone())
+                .acquire()
+                .call()
+                .await?;
+            if !admitted {
                 return Ok(Json(AgentReply {
                     output: serde_json::Value::Null,
                     exec_count: 0,
                     denied: true,
-                    reason: Some(reason),
+                    reason: Some("tenant quota exceeded".to_string()),
                 }));
             }
 
-            // Deterministic time for the capability TTL (journaled via ctx.run).
-            let now: u64 = ctx.run(|| async { now_unix() }).await?;
-
-            // Mint a short-lived capability scoped to exactly this tool.
-            let cap = Capability {
-                id: format!("cap-{}", req.invocation_id),
-                tenant: "default".into(),
-                subject: agent_id,
-                resource: Resource::Tool { name: req.tool_name.clone() },
-                actions: vec![Action::Call],
-                expires_at: now + 300, // 5 minutes
-                policy_hash: "tools.cedar@v1".into(),
-                audit_id: format!("aud-{}", req.invocation_id),
-            };
-            let token = sign(&cap_secret(), &cap);
-
-            let tool_key = req.tool_name.clone();
-            let Json(out) = ctx
-                .object_client::<ToolServiceClient>(tool_key)
-                .run(Json(ToolCall { request: req, capability_token: token }))
+            // Run the real work, then release the slot regardless of outcome.
+            let outcome = handle_inner(&ctx, &input).await;
+            ctx.object_client::<TenantServiceClient>(tenant)
+                .release()
                 .call()
                 .await?;
-            Ok(Json(AgentReply {
-                output: out.output,
-                exec_count: out.exec_count,
-                denied: false,
-                reason: None,
-            }))
+            outcome.map(Json)
         }
+    }
+
+    /// The policy + capability + tool logic, separated so the quota slot can be
+    /// released on every return path.
+    async fn handle_inner(
+        ctx: &ObjectContext<'_>,
+        input: &UserInput,
+    ) -> Result<AgentReply, HandlerError> {
+        let agent_id = ctx.key().to_string();
+        let req: ToolRequest = plan_user_input(input);
+
+        // Policy is evaluated independently of the model's intent.
+        if let PolicyDecision::Deny(reason) = evaluate(&agent_id, &req.tool_name) {
+            return Ok(AgentReply {
+                output: serde_json::Value::Null,
+                exec_count: 0,
+                denied: true,
+                reason: Some(reason),
+            });
+        }
+
+        // Deterministic time for the capability TTL (journaled via ctx.run).
+        let now: u64 = ctx.run(|| async { now_unix() }).await?;
+
+        // Mint a short-lived capability scoped to exactly this tool.
+        let cap = Capability {
+            id: format!("cap-{}", req.invocation_id),
+            tenant: "default".into(),
+            subject: agent_id,
+            resource: Resource::Tool { name: req.tool_name.clone() },
+            actions: vec![Action::Call],
+            expires_at: now + 300, // 5 minutes
+            policy_hash: "tools.cedar@v1".into(),
+            audit_id: format!("aud-{}", req.invocation_id),
+        };
+        let token = sign(&cap_secret(), &cap);
+
+        let tool_key = req.tool_name.clone();
+        let Json(out) = ctx
+            .object_client::<ToolServiceClient>(tool_key)
+            .run(Json(ToolCall { request: req, capability_token: token }))
+            .call()
+            .await?;
+        Ok(AgentReply {
+            output: out.output,
+            exec_count: out.exec_count,
+            denied: false,
+            reason: None,
+        })
     }
 }
