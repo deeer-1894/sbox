@@ -76,6 +76,7 @@ dependencies = [
  "aep-memory",
  "aep-policy",
  "aep-sandbox",
+ "aep-supplychain",
  "aep-telemetry",
  "axum",
  "reqwest",

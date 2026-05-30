@@ -14,6 +14,19 @@ use restate_sdk::prelude::*;
 /// Address of the in-process "external" counter the tool side effect mutates.
 const COUNTER_BASE: &str = "http://localhost:9090";
 
+/// The audited tool WASM (WAT form). Its digest is pinned in TRUSTED_ECHO_DIGEST;
+/// ToolService verifies it before the sandbox runs it.
+const TOOL_WAT: &str = r#"
+                    (module
+                      (import "env" "host_sink" (func $sink (result i32)))
+                      (func (export "run") (result i32) call $sink))
+                "#;
+
+/// Pinned SHA-256 of the audited TOOL_WAT. Regenerate if the artifact changes:
+///   the value equals aep_supplychain::sha256_hex(TOOL_WAT.as_bytes()).
+const TRUSTED_ECHO_DIGEST: &str =
+    "ab0c7fdb3a8908e6b70afe42e8c5738ccfbd028648437fa113e45d59008a3a5c";
+
 /// Process-shared capability signing secret. Single-node Phase 1 only; production
 /// uses an asymmetric key so verifiers never hold the signing key.
 pub fn cap_secret() -> Vec<u8> {
@@ -62,20 +75,23 @@ impl ToolService for ToolServiceImpl {
         aep_telemetry::capture().record(&req.invocation_id, "ToolService");
         tracing::info!(trace_id = %req.invocation_id, actor = "ToolService", kind = "turn", "actor turn");
 
+        // Supply-chain: the tool artifact must match the pinned trusted digest
+        // before the sandbox runs it. (Production loads a signed manifest.)
+        let mut registry = aep_supplychain::Registry::default();
+        registry.register("echo-tool", TRUSTED_ECHO_DIGEST);
+        registry
+            .verify("echo-tool", TOOL_WAT.as_bytes())
+            .map_err(|e| TerminalError::new(format!("supply-chain verification failed: {e}")))?;
+
         // --- Phase 0 side-effect boundary (unchanged) ---
         let existing = ctx.get::<Json<ToolOutput>>(&req.invocation_id).await?.map(|j| j.0);
         match decide(existing) {
             Decision::Reuse(output) => Ok(Json(output)),
             Decision::Execute => {
                 let content = req.input.clone();
-                // The tool runs as WASM; its only path to the side effect is the
-                // capability-gated host_sink, which POSTs the counter. The sandbox
+                // The tool runs as WASM (module-level TOOL_WAT); its only path to
+                // the side effect is the capability-gated host_sink. The sandbox
                 // links host_sink only if `cap` authorizes this tool's resource.
-                const TOOL_WAT: &str = r#"
-                    (module
-                      (import "env" "host_sink" (func $sink (result i32)))
-                      (func (export "run") (result i32) call $sink))
-                "#;
                 let cap_for_tool = cap.clone();
                 let required = Resource::Tool { name: req.tool_name.clone() };
                 let count: u64 = ctx

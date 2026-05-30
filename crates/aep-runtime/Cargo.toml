@@ -12,6 +12,7 @@ aep-sandbox = { path = "../aep-sandbox" }
 aep-audit = { path = "../aep-audit" }
 aep-telemetry = { path = "../aep-telemetry" }
 aep-memory = { path = "../aep-memory" }
+aep-supplychain = { path = "../aep-supplychain" }
 tracing = { workspace = true }
 restate-sdk.workspace = true
 tokio.workspace = true
