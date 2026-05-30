@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = ["crates/aep-domain", "crates/aep-runtime", "crates/aep-itest"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "1"
+tokio = { version = "1", features = ["full"] }
+restate-sdk = "0.8"
+axum = "0.7"
+reqwest = { version = "0.12", features = ["json"] }
+uuid = { version = "1", features = ["v4"] }
