@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/aep-domain", "crates/aep-runtime", "crates/aep-itest"]
+members = [
+  "crates/aep-domain",
+  "crates/aep-capability",
+  "crates/aep-policy",
+  "crates/aep-runtime",
+  "crates/aep-itest",
+]
 
 [workspace.package]
 edition = "2021"
@@ -17,3 +23,6 @@ restate-sdk = "0.8"
 axum = "0.7"
 reqwest = { version = "0.12", features = ["json"] }
 uuid = { version = "1", features = ["v4"] }
+hmac = "0.12"
+base64 = "0.22"
+cedar-policy = "4"

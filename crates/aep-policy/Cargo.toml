@@ -1,0 +1,10 @@
+[package]
+name = "aep-policy"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+cedar-policy = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
