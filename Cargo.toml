@@ -9,6 +9,7 @@ members = [
   "crates/aep-telemetry",
   "crates/aep-memory",
   "crates/aep-supplychain",
+  "crates/aep-procsandbox",
   "crates/aep-runtime",
   "crates/aep-itest",
 ]
