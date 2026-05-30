@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use aep_capability::{sign, Action, Capability, Resource};
-use aep_domain::{decide, AgentReply, Decision, ToolOutput, ToolRequest, UserInput};
+use aep_domain::{admit, decide, AgentReply, Decision, ToolOutput, ToolRequest, UserInput};
 use aep_policy::{evaluate, PolicyDecision};
 use axum::{extract::State, routing::{get, post}, Json as AxumJson, Router};
 use restate_sdk::prelude::*;
@@ -99,6 +99,48 @@ impl ToolService for ToolServiceImpl {
                 Ok(Json(output))
             }
         }
+    }
+}
+
+/// Default per-tenant concurrency limit when none is configured.
+const DEFAULT_TENANT_LIMIT: u32 = 1000;
+
+/// TenantService: keyed by tenant id. Durable in-flight counter + limit.
+#[restate_sdk::object]
+pub trait TenantService {
+    async fn set_limit(max: u32) -> Result<(), HandlerError>;
+    async fn acquire() -> Result<bool, HandlerError>;
+    async fn release() -> Result<(), HandlerError>;
+    async fn in_flight() -> Result<u32, HandlerError>;
+}
+
+pub struct TenantServiceImpl;
+
+impl TenantService for TenantServiceImpl {
+    async fn set_limit(&self, ctx: ObjectContext<'_>, max: u32) -> Result<(), HandlerError> {
+        ctx.set("limit", max);
+        Ok(())
+    }
+
+    async fn acquire(&self, ctx: ObjectContext<'_>) -> Result<bool, HandlerError> {
+        let limit = ctx.get::<u32>("limit").await?.unwrap_or(DEFAULT_TENANT_LIMIT);
+        let current = ctx.get::<u32>("current").await?.unwrap_or(0);
+        if admit(current, limit) {
+            ctx.set("current", current + 1);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    async fn release(&self, ctx: ObjectContext<'_>) -> Result<(), HandlerError> {
+        let current = ctx.get::<u32>("current").await?.unwrap_or(0);
+        ctx.set("current", current.saturating_sub(1));
+        Ok(())
+    }
+
+    async fn in_flight(&self, ctx: ObjectContext<'_>) -> Result<u32, HandlerError> {
+        Ok(ctx.get::<u32>("current").await?.unwrap_or(0))
     }
 }
 
