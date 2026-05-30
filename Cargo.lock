@@ -51,6 +51,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "aep-memory"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "aep-policy"
 version = "0.1.0"
 dependencies = [
