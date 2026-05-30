@@ -290,7 +290,8 @@ In `crates/aep-runtime/src/lib.rs`, in `mod agent`'s `handle_inner`, after the `
             .to_string();
         let (sanitized_value, was_sanitized) = aep_memory::sanitize(&raw);
         let entry = MemoryEntry {
-            key: req.invocation_id.clone(),
+            // `req` was moved into the ToolCall above; `trace` == req.invocation_id.
+            key: trace.clone(),
             value: sanitized_value,
             tier: aep_memory::MemoryTier::Operational,
             trust: aep_memory::classify_tool_output(),
