@@ -42,6 +42,35 @@ pub fn capture() -> &'static SpanCapture {
     CAPTURE.get_or_init(SpanCapture::default)
 }
 
+/// Install an OTLP span exporter + tracing bridge pointing at `endpoint`
+/// (e.g. http://localhost:4317). Call once at startup. Real OpenTelemetry export.
+pub fn init_otel(endpoint: &str) {
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry::KeyValue;
+    use opentelemetry_otlp::WithExportConfig;
+    use opentelemetry_sdk::runtime;
+    use opentelemetry_sdk::trace::TracerProvider;
+    use opentelemetry_sdk::Resource;
+    use tracing_subscriber::prelude::*;
+
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(endpoint)
+        .build()
+        .expect("build OTLP exporter");
+    let provider = TracerProvider::builder()
+        .with_resource(Resource::new(vec![KeyValue::new("service.name", "aep-runtime")]))
+        .with_batch_exporter(exporter, runtime::Tokio)
+        .build();
+    let tracer = provider.tracer("aep-runtime");
+    opentelemetry::global::set_tracer_provider(provider);
+
+    let _ = tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_opentelemetry::layer().with_tracer(tracer))
+        .try_init();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

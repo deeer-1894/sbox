@@ -8,6 +8,14 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"  # UI / trace query API
+      - "4317:4317"    # OTLP gRPC ingest
+
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
     ports:

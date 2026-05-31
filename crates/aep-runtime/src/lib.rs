@@ -277,6 +277,7 @@ pub use agent::*;
 mod agent {
     use super::*;
     use aep_domain::plan_user_input;
+    use tracing::Instrument;
 
     /// AgentService: keyed by agent id. Evaluates policy, mints a capability on
     /// Permit, then calls ToolService with the capability token.
@@ -310,8 +311,15 @@ mod agent {
                 }));
             }
 
-            // Run the real work, then release the slot regardless of outcome.
-            let outcome = handle_inner(&ctx, &input).await;
+            // Run the real work in an OpenTelemetry span, then release the slot
+            // regardless of outcome.
+            let outcome = handle_inner(&ctx, &input)
+                .instrument(tracing::info_span!(
+                    "AgentService.handle",
+                    trace_id = %input.idempotency_key,
+                    actor = "AgentService"
+                ))
+                .await;
             ctx.object_client::<TenantServiceClient>(tenant)
                 .release()
                 .call()
