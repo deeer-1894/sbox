@@ -4,6 +4,16 @@ Date: 2026-05-30
 
 ## Status
 
+**Implemented and verified** on a live stack (single-node). Every phase in the
+roadmap below that is exercisable from a single host has been built test-first
+and verified end-to-end against Restate — see the per-phase plans and acceptance
+records in `docs/superpowers/plans/` and the project [`README`](../../../README.md).
+Delivered: durable execution + effectively-once side effects (Phase 0), Cedar
+policy + capability tokens + WASM sandbox (Phase 1/1b), tenant quota + ClickHouse
+audit + OTLP→Jaeger traces (Phase 2), memory trust/sanitization + seccomp process
+sandbox + supply-chain verification (Phase 3a/3b/3c). Not built: distributed
+"planet scale" and microVM/namespace isolation (noted in the roadmap).
+
 Approved design direction: **Agent Execution Plane on a bought durable substrate.**
 
 This document supersedes the build-from-scratch direction in
