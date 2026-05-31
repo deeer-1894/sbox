@@ -1,7 +1,7 @@
 //! Restate adapter for the agent/tool domain logic.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use aep_audit::{capability_for, causal_chain, AuditEvent};
 use aep_memory::{MemoryEntry, TrustLabel};
@@ -27,10 +27,38 @@ const TOOL_WAT: &str = r#"
 const TRUSTED_ECHO_DIGEST: &str =
     "ab0c7fdb3a8908e6b70afe42e8c5738ccfbd028648437fa113e45d59008a3a5c";
 
-/// Process-shared capability signing secret. Single-node Phase 1 only; production
-/// uses an asymmetric key so verifiers never hold the signing key.
-pub fn cap_secret() -> Vec<u8> {
-    std::env::var("AEP_CAP_SECRET").unwrap_or_else(|_| "dev-insecure-secret".into()).into_bytes()
+/// Process-shared capability signing secret (read once). Single-node Phase 1
+/// only; production uses an asymmetric key so verifiers never hold the signing key.
+pub fn cap_secret() -> &'static [u8] {
+    static SECRET: OnceLock<Vec<u8>> = OnceLock::new();
+    SECRET.get_or_init(|| {
+        std::env::var("AEP_CAP_SECRET")
+            .unwrap_or_else(|_| "dev-insecure-secret".into())
+            .into_bytes()
+    })
+}
+
+/// Shared async HTTP client — reuses one connection pool instead of building a
+/// fresh client (and pool) per call.
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(reqwest::Client::new)
+}
+
+/// Shared blocking HTTP client for the sandbox host function.
+fn blocking_http_client() -> &'static reqwest::blocking::Client {
+    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    CLIENT.get_or_init(reqwest::blocking::Client::new)
+}
+
+/// The pinned tool artifact registry, built once.
+fn tool_registry() -> &'static aep_supplychain::Registry {
+    static REGISTRY: OnceLock<aep_supplychain::Registry> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        let mut r = aep_supplychain::Registry::default();
+        r.register("echo-tool", TRUSTED_ECHO_DIGEST);
+        r
+    })
 }
 
 /// Current Unix time (seconds). Call only inside `ctx.run` so the value is
@@ -66,7 +94,7 @@ impl ToolService for ToolServiceImpl {
     ) -> Result<Json<ToolOutput>, HandlerError> {
         // The capability is the sole authority. Deterministic time via ctx.run.
         let now: u64 = ctx.run(|| async { now_unix() }).await?;
-        let cap = aep_capability::verify(&cap_secret(), &capability_token, now)
+        let cap = aep_capability::verify(cap_secret(), &capability_token, now)
             .map_err(|e| TerminalError::new(format!("capability rejected: {e}")))?;
         cap.authorize(Action::Call, &Resource::Tool { name: req.tool_name.clone() })
             .map_err(|e| TerminalError::new(format!("capability not scoped to tool: {e}")))?;
@@ -77,9 +105,7 @@ impl ToolService for ToolServiceImpl {
 
         // Supply-chain: the tool artifact must match the pinned trusted digest
         // before the sandbox runs it. (Production loads a signed manifest.)
-        let mut registry = aep_supplychain::Registry::default();
-        registry.register("echo-tool", TRUSTED_ECHO_DIGEST);
-        registry
+        tool_registry()
             .verify("echo-tool", TOOL_WAT.as_bytes())
             .map_err(|e| TerminalError::new(format!("supply-chain verification failed: {e}")))?;
 
@@ -98,7 +124,7 @@ impl ToolService for ToolServiceImpl {
                     .run(|| async move {
                         let n = tokio::task::spawn_blocking(move || {
                             aep_sandbox::run_tool(TOOL_WAT, &cap_for_tool, &required, || {
-                                reqwest::blocking::Client::new()
+                                blocking_http_client()
                                     .post(format!("{COUNTER_BASE}/incr"))
                                     .send()
                                     .and_then(|r| r.text())
@@ -200,7 +226,7 @@ impl AuditService for AuditServiceImpl {
                 let url = std::env::var("CLICKHOUSE_URL")
                     .unwrap_or_else(|_| "http://aep:aep@localhost:8123".to_string());
                 let body = format!("INSERT INTO audit_events FORMAT JSONEachRow\n{row}");
-                let _ = reqwest::Client::new().post(&url).body(body).send().await;
+                let _ = http_client().post(&url).body(body).send().await;
                 Ok(())
             })
             .await?;
@@ -374,7 +400,7 @@ mod agent {
         };
         emit(ctx, &trace, "capability_minted", Some("policy_permit"), "AgentService", now,
              Some(cap.id.clone()), None, serde_json::json!({ "resource": req.tool_name })).await?;
-        let token = sign(&cap_secret(), &cap);
+        let token = sign(cap_secret(), &cap);
 
         emit(ctx, &trace, "tool_requested", Some("capability_minted"), "AgentService", now,
              Some(cap.id.clone()), Some(req.invocation_id.clone()),
